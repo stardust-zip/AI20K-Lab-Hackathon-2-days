@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hackathon"
+version = "0.1.0"
+description = "we can do it in 2 days!"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+ # We shall put our python pkgs here
+ # E.g., requests>=2.31.0
+]
+
+[project.optional-dependencies]
+dev = [
+	"pytest",
+
+	# pip install . install the core application
+	# pip install ".[dev]" installs the app PLUS all these testing and linting tools
+]
+
+
+[tool.pytest.ini_options]
+# Tell pytest to add the 'src' directory to the PYTHONPATH
+pythonpath = [
+  "src"
+]
+
+[tool.basedpyright]
+# Tell basedpyright to add 'src' to its list of
+# paths to search for imports. This directly fixes the
+# "reportMissingImports" error.
+extraPaths = [
+  "src"
+]
+include = ["src"]
+exclude = ["__pycache__", ".direnv", ".mypy_cache", ".git", ".venv"]
