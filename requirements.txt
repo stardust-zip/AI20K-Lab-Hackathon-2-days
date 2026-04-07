@@ -5,3 +5,5 @@ anthropic
 openai
 python-dotenv
 httpx
+slowapi
+psutil

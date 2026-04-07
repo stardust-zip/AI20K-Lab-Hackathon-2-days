@@ -78,11 +78,13 @@
               python-lsp-server
 
               fastapi
+              slowapi
               uvicorn
               pydantic
               anthropic
               openai
               python-dotenv
+              psutil
               httpx
 
 
