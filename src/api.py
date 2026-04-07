@@ -16,6 +16,8 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # ty
 
 logger = logging.getLogger("LLMOps")
 
+START_TIME = time.time()
+
 
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -57,7 +59,6 @@ def advanced_health_check():
 @limiter.limit("5/minute")
 async def chat_endpoint(request: Request, body: ChatRequest):
     return ChatResponse(
-        # Nhớ đổi request.message thành body.message ở đây nhé
         answer=f"Đã nhận tin nhắn: '{body.message}'. Agent đang được tích hợp.",
         sources=["mock_document.pdf"],
     )

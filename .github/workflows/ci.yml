@@ -29,3 +29,14 @@ jobs:
     - name: Test Docker Build
       run: |
         docker build -t test-build .
+
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install ruff basedpyright # Install the linters
+
+    - name: Lint with Ruff (Catches undefined variables)
+      run: |
+        ruff check src/
