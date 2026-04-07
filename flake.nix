@@ -77,7 +77,13 @@
               pip
               python-lsp-server
 
-              chromadb # AI-native open-source embedding database
+              fastapi
+              uvicorn
+              pydantic
+              anthropic
+              openai
+              python-dotenv
+              httpx
 
 
               # Add whatever else you'd like here.
