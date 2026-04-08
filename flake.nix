@@ -89,10 +89,15 @@
               langfuse
               sqlalchemy
               supabase
-
+              psycopg2-binary
+              spacy
+              pgvector
 
               # Add whatever else you'd like here.
               pkgs.basedpyright
+              pkgs.npx
+
+              pkgs.nodejs
 
               # pkgs.black
               # or
