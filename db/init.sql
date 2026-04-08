@@ -1,0 +1,1 @@
+-- Please write down your sql here, I will apply theme to Supabase

@@ -86,6 +86,9 @@
               python-dotenv
               psutil
               httpx
+              langfuse
+              sqlalchemy
+              supabase
 
 
               # Add whatever else you'd like here.

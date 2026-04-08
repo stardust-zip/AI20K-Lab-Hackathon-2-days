@@ -7,3 +7,6 @@ python-dotenv
 httpx
 slowapi
 psutil
+langfuse
+supabase
+sqlalchemy
