@@ -2,7 +2,6 @@ import time
 import os
 import logging
 import psutil
-import openai
 from fastapi import FastAPI, Request
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
