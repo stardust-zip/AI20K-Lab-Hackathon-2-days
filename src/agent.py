@@ -22,10 +22,86 @@ from typing import Any, AsyncGenerator
 import psycopg2
 import psycopg2.extras
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 from .config import settings
 
 logger = logging.getLogger("vinmec.agent")
+
+# ---------------------------------------------------------------------------
+# AGENT CONFIGURATION (Prompt & Tools)
+# ---------------------------------------------------------------------------
+
+_AGENT_SYSTEM_PROMPT = """Bạn là trợ lý AI Điều dưỡng Sơ yếu của Vinmec. Nhiệm vụ của bạn là thu thập triệu chứng và phân luồng bệnh nhân.
+Quy tắc hoạt động (Agentic Loop):
+1. LUÔN LUÔN gọi tool `check_emergency` đầu tiên để quét rủi ro.
+2. Nếu thiếu thông tin, hãy trực tiếp hỏi lại bệnh nhân (không gọi tool).
+3. Khi đủ thông tin, tự đánh giá độ tự tin (Confidence).
+   - Nếu tự tin >= 85%: gọi tool `resolve_and_get_booking_info`.
+   - Nếu tự tin < 85%: gọi tool `escalate_to_human_nurse`.
+Tuyệt đối không chẩn đoán bệnh hay kê đơn thuốc. Giao tiếp bằng tiếng Việt tự nhiên."""
+
+_AGENT_TOOLS: list[Any] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "check_emergency",
+            "description": "Kiểm tra các dấu hiệu cảnh báo đỏ (Cấp cứu). BẮT BUỘC gọi công cụ này ngay sau khi nhận được triệu chứng mới.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symptoms": {
+                        "type": "string",
+                        "description": "Triệu chứng cốt lõi của bệnh nhân",
+                    }
+                },
+                "required": ["symptoms"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "escalate_to_human_nurse",
+            "description": "Chuyển ca bệnh cho điều dưỡng thật khi không chắc chắn về chuyên khoa (độ tự tin < 85%) hoặc cần chẩn đoán phức tạp.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "clinical_summary": {
+                        "type": "string",
+                        "description": "Tóm tắt bệnh án ngắn gọn cho điều dưỡng",
+                    },
+                    "suggested_dept": {
+                        "type": "string",
+                        "description": "Mã chuyên khoa dự đoán (có thể null)",
+                    },
+                },
+                "required": ["clinical_summary"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "resolve_and_get_booking_info",
+            "description": "Gọi khi ĐÃ CHẮC CHẮN (>85%) về chuyên khoa. Lấy danh sách bác sĩ và cơ sở để bệnh nhân đặt lịch.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "department_code": {
+                        "type": "string",
+                        "description": "Mã khoa (VD: CARD, GAST, ...)",
+                    },
+                    "department_name": {
+                        "type": "string",
+                        "description": "Tên khoa bằng tiếng Việt",
+                    },
+                },
+                "required": ["department_code", "department_name"],
+            },
+        },
+    },
+]
 
 # ---------------------------------------------------------------------------
 # Module-level singletons (initialised lazily to avoid import-time crashes)
@@ -805,230 +881,128 @@ async def run_triage_pipeline(
     patient_id: str,
     message: str,
     conversation_history: list[dict[str, str]] | None = None,
-    follow_up_rounds: int = 0,
+    follow_up_rounds: int = 0,  # Kept for compatibility with api.py
 ) -> dict[str, Any]:
-    """
-    Orchestrate the full triage pipeline for a single patient message.
 
-    Steps
-    -----
-    1. De-identify raw message with Presidio.
-    2. Extract core symptoms via LLM.
-    3. Check red-flag similarity via pgvector (short-circuit if emergency).
-    4. Run LLM triage router to get department + confidence.
-    5. Flow decision:
-       - confidence ≥ threshold                        → AUTO_RESOLVED
-         (also fetches doctor list + nearest clinic)
-       - confidence < threshold, rounds < MAX           → FOLLOW_UP
-         (return follow_up_question only, no DB insert)
-       - confidence < threshold, rounds ≥ MAX           → PENDING_HUMAN
-         (insert to human_triage_queue)
-    6. Generate clinical summary (only when inserting to queue or resolved).
-    7. Persist triage_log + queue entry when needed.
+    clean_text = deidentify_text(message)
+    client = _get_openai()
 
-    Parameters
-    ----------
-    patient_id:
-        Opaque patient identifier (e.g. ``"PAT-00123"``).
-    message:
-        Raw free-text from the patient's chat input.
-    conversation_history:
-        Previous conversation turns for multi-turn context.
-    follow_up_rounds:
-        How many follow-up rounds have already been completed this session.
+    messages: list[ChatCompletionMessageParam] = [
+        {"role": "system", "content": _AGENT_SYSTEM_PROMPT}
+    ]
 
-    Returns
-    -------
-    dict with keys:
-        - ``flow``             : ``"AUTO_RESOLVED"`` | ``"PENDING_HUMAN"``
-                                 | ``"EMERGENCY"`` | ``"FOLLOW_UP"``
-        - ``department_code``  : str | None
-        - ``department_name``  : str | None
-        - ``confidence_score`` : int | None
-        - ``follow_up_question``: str | None
-        - ``clinical_summary`` : str | None
-        - ``queue_id``         : str | None  (PENDING_HUMAN only)
-        - ``matched_keyword``  : str | None  (EMERGENCY only)
-        - ``similarity_score`` : float | None (EMERGENCY only)
-        - ``doctors``          : list[dict] | None  (AUTO_RESOLVED only)
-        - ``nearest_clinic``   : dict | None  (AUTO_RESOLVED only)
-        - ``error``            : str | None
-    """
+    if conversation_history:
+        for turn in conversation_history:
+            # Only add standard roles
+            if turn.get("role") in ["user", "assistant", "system", "tool"]:
+                messages.append(
+                    {"role": turn.get("role"), "content": turn.get("content", "")}
+                )  # type: ignore
+
+    messages.append({"role": "user", "content": clean_text})
+
+    conn = None
+    try:
+        conn = _get_db_connection()
+    except Exception as exc:
+        logger.warning("DB unavailable (%s); proceeding with caution.", exc)
+
     result: dict[str, Any] = {
-        "flow": "PENDING_HUMAN",  # Safe default
+        "flow": "FOLLOW_UP",
         "department_code": None,
         "department_name": None,
         "confidence_score": None,
-        "follow_up_question": None,
-        "clinical_summary": None,
+        "patient_message": None,
         "queue_id": None,
-        "matched_keyword": None,
-        "similarity_score": None,
         "doctors": None,
         "clinics": None,
-        "error": None,
     }
 
-    # ------------------------------------------------------------------
-    # Step 1: De-identification
-    # ------------------------------------------------------------------
-    try:
-        clean_text = deidentify_text(message)
-        logger.debug("De-identified text: %s", clean_text[:120])
-    except Exception as exc:  # noqa: BLE001
-        logger.error("De-identification failed: %s", exc)
-        clean_text = message  # Proceed with original on failure
+    # Vòng lặp tự trị (Tối đa 3 steps để tránh infinite loop)
+    MAX_ITERATIONS = 3
+    for _ in range(MAX_ITERATIONS):
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_CHAT_MODEL,
+            messages=messages,
+            tools=_AGENT_TOOLS,
+            tool_choice="auto",
+        )
 
-    # ------------------------------------------------------------------
-    # Step 2: Symptom extraction
-    # ------------------------------------------------------------------
-    try:
-        extraction = await extract_symptoms(clean_text)
-        symptoms_text: str = extraction.get("symptoms") or clean_text
-        age: int | None = extraction.get("age")
-        gender: str | None = extraction.get("gender")
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Symptom extraction failed: %s", exc)
-        symptoms_text = clean_text
-        age = None
-        gender = None
+        response_message = response.choices[0].message
+        messages.append(response_message)  # type: ignore
 
-    # ------------------------------------------------------------------
-    # Steps 3-6: Attempt DB-dependent operations
-    # ------------------------------------------------------------------
-    conn = None
-    db_available = False
+        if not response_message.tool_calls:
+            # Agent quyết định giao tiếp trực tiếp với user (Follow-up)
+            result["flow"] = "FOLLOW_UP"
+            result["patient_message"] = response_message.content
+            break
 
-    try:
-        conn = _get_db_connection()
-        db_available = True
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("DB unavailable (%s); skipping red-flags & persistence.", exc)
+        # Agent quyết định sử dụng Tool
+        tool_calls = response_message.tool_calls
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            args = json.loads(tool_call.function.arguments)
 
-    try:
-        # ------------------------------------------------------------------
-        # Step 3: Red-flag check (only if DB is available)
-        # ------------------------------------------------------------------
-        if db_available and conn is not None:
-            is_emergency, matched_keyword, similarity = await check_red_flags(
-                symptoms_text, conn
-            )
+            tool_result = ""
 
-            if is_emergency:
-                result["flow"] = "EMERGENCY"
-                result["matched_keyword"] = matched_keyword
-                result["similarity_score"] = similarity
-                logger.warning(
-                    "EMERGENCY triggered: keyword='%s' similarity=%.4f",
-                    matched_keyword,
-                    similarity,
+            if function_name == "check_emergency":
+                if conn:
+                    is_emergency, keyword, sim = await check_red_flags(
+                        args["symptoms"], conn
+                    )
+                    if is_emergency:
+                        result["flow"] = "EMERGENCY"
+                        result["matched_keyword"] = keyword
+                        result["similarity_score"] = sim
+                        return result  # Ngắt ngay lập tức
+                    tool_result = "No emergency detected. Safe to proceed."
+                else:
+                    tool_result = "DB unavailable, proceed with caution."
+
+            elif function_name == "escalate_to_human_nurse":
+                result["flow"] = "PENDING_HUMAN"
+                if conn:
+                    result["queue_id"] = await insert_to_queue(
+                        conn,
+                        patient_id,
+                        args["clinical_summary"],
+                        args.get("suggested_dept"),
+                    )
+                    conn.commit()
+                tool_result = "Escalated successfully."
+                result["patient_message"] = (
+                    "Hệ thống đã ghi nhận triệu chứng. Tôi đang chuyển hồ sơ của bạn cho điều dưỡng chuyên môn để hỗ trợ trực tiếp."
                 )
-                # Do NOT call the triage LLM – return immediately
                 return result
 
-        # ------------------------------------------------------------------
-        # Step 4: LLM triage routing
-        # ------------------------------------------------------------------
-        triage_result = await triage_symptoms(symptoms_text, conversation_history)
-
-        confidence: int = triage_result.get("confidence_score", 0)
-        dept_code: str | None = triage_result.get("department_code")
-        dept_name: str | None = triage_result.get("department_name")
-        follow_up: str | None = triage_result.get("follow_up_question")
-
-        result["department_code"] = dept_code
-        result["department_name"] = dept_name
-        result["confidence_score"] = confidence
-        result["follow_up_question"] = follow_up
-        result["patient_message"] = triage_result.get("patient_message")
-
-        # ------------------------------------------------------------------
-        # Step 5: Clinical summary
-        # ------------------------------------------------------------------
-        clinical_summary = await generate_clinical_summary(
-            symptoms_text, triage_result, age, gender
-        )
-        result["clinical_summary"] = clinical_summary
-
-        # ------------------------------------------------------------------
-        # Step 6: Persist to DB
-        # ------------------------------------------------------------------
-        below_threshold = confidence < settings.HUMAN_TRIAGE_CONFIDENCE_THRESHOLD
-
-        if below_threshold and follow_up_rounds < settings.MAX_FOLLOWUP_ROUNDS:
-            # Still within follow-up budget – ask the patient for more info
-            result["flow"] = "FOLLOW_UP"
-            logger.info(
-                "FOLLOW_UP: confidence=%d round=%d/%d",
-                confidence,
-                follow_up_rounds,
-                settings.MAX_FOLLOWUP_ROUNDS,
-            )
-            # No DB persistence for follow-up rounds
-        elif db_available and conn is not None:
-            try:
-                # Always embed and log the triage attempt
-                symptom_embedding = await get_embedding(symptoms_text)
-
-                await insert_triage_log(
-                    conn=conn,
-                    raw_symptoms=symptoms_text,
-                    symptom_embedding=symptom_embedding,
-                    ai_suggested_dept=dept_code,
-                    confidence=float(confidence),
-                )
-
-                if below_threshold:
-                    # Rounds exhausted – escalate to nurse queue
-                    queue_id = await insert_to_queue(
-                        conn=conn,
-                        patient_id=patient_id,
-                        clinical_summary=clinical_summary,
-                        suggested_dept=dept_code,
-                    )
-                    result["queue_id"] = queue_id
-                    result["flow"] = "PENDING_HUMAN"
-                    logger.info(
-                        "PENDING_HUMAN: confidence=%d rounds exhausted → queue %s",
-                        confidence,
-                        queue_id,
-                    )
-                else:
-                    result["flow"] = "AUTO_RESOLVED"
-                    result["doctors"] = await get_doctors_by_department(conn, dept_code or "")
-                    result["clinics"] = await get_clinics_by_department(conn, dept_code or "")
-
-                conn.commit()
-
-            except Exception as exc:  # noqa: BLE001
-                logger.error("DB persistence failed: %s", exc, exc_info=True)
-                if conn:
-                    conn.rollback()
-                # Fall back to confidence-based flow decision without DB
-                if not below_threshold:
-                    result["flow"] = "AUTO_RESOLVED"
-                else:
-                    result["flow"] = "PENDING_HUMAN"
-
-        else:
-            # No DB – decide flow by confidence alone
-            if not below_threshold:
+            elif function_name == "resolve_and_get_booking_info":
                 result["flow"] = "AUTO_RESOLVED"
-            elif follow_up_rounds < settings.MAX_FOLLOWUP_ROUNDS:
-                result["flow"] = "FOLLOW_UP"
-            else:
-                result["flow"] = "PENDING_HUMAN"
+                result["department_code"] = args["department_code"]
+                result["department_name"] = args["department_name"]
+                if conn:
+                    result["doctors"] = await get_doctors_by_department(
+                        conn, args["department_code"]
+                    )
+                    result["clinics"] = await get_clinics_by_department(
+                        conn, args["department_code"]
+                    )
+                tool_result = "Booking info retrieved."
+                result["patient_message"] = (
+                    f"Tôi khuyên bạn nên khám tại khoa {args['department_name']}. Dưới đây là các bác sĩ phù hợp."
+                )
+                return result
 
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Triage pipeline unexpected error: %s", exc, exc_info=True)
-        result["error"] = str(exc)
-        result["flow"] = "PENDING_HUMAN"
+            # Feed kết quả tool lại cho Agent
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "name": function_name,
+                    "content": tool_result,
+                }
+            )
 
-    finally:
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001
-                pass
+    if conn:
+        conn.close()
 
     return result
