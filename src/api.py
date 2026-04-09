@@ -303,7 +303,6 @@ def _build_patient_message(flow: str, triage: dict[str, Any]) -> str:
 async def chat_triage(
     request: Request,  # required by slowapi limiter
     body: ChatRequest,
-    background_tasks: BackgroundTasks,
 ):
     """
     Main patient-facing triage endpoint.
