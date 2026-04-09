@@ -67,7 +67,7 @@ class Settings:
     # ------------------------------------------------------------------
     # Cosine similarity threshold above which we short-circuit to EMERGENCY
     RED_FLAG_SIMILARITY_THRESHOLD: float = float(
-        os.getenv("RED_FLAG_SIMILARITY_THRESHOLD", "0.85")
+        os.getenv("RED_FLAG_SIMILARITY_THRESHOLD", "0.75")
     )
 
     # Confidence score below which a case goes to human-triage queue

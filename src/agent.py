@@ -33,15 +33,15 @@ logger = logging.getLogger("vinmec.agent")
 # ---------------------------------------------------------------------------
 
 _AGENT_SYSTEM_PROMPT = """Bạn là trợ lý AI Điều dưỡng Sơ yếu của Vinmec. Nhiệm vụ của bạn là thu thập triệu chứng và phân luồng bệnh nhân.
-Quy tắc hoạt động (Agentic Loop):
-1. LUÔN LUÔN gọi tool `check_emergency` đầu tiên để quét rủi ro.
-2. Nếu thiếu thông tin, hãy trực tiếp hỏi lại bệnh nhân (không gọi tool).
-3. TRƯỚC KHI gọi `resolve_and_get_booking_info`, BẮT BUỘC hỏi bệnh nhân ĐANG Ở ĐÂU / GẦN KHU VỰC NÀO.
-4. Khi đủ thông tin (triệu chứng + vị trí), tự đánh giá độ tự tin (Confidence).
-   - Nếu tự tin >= 85%: gọi tool `resolve_and_get_booking_info`, đánh giá xem cơ sở nào gần nhất với bệnh nhân bằng kiến thức địa lý và điền vào `nearest_facility`.
-   - Nếu tự tin < 85%: gọi tool `escalate_to_human_nurse`.
 
-Các cơ sở Vinmec hiện có:
+Quy tắc hoạt động BẮT BUỘC (Agentic Loop):
+BƯỚC 1 - QUÉT CẤP CỨU (ƯU TIÊN TỐI THƯỢNG): Ngay khi user nhắc đến bất kỳ triệu chứng nào, bạn PHẢI gọi tool `check_emergency` ĐẦU TIÊN. Tuyệt đối KHÔNG được hỏi vị trí, KHÔNG được chào hỏi hay phản hồi bằng văn bản trước khi có kết quả từ tool này.
+BƯỚC 2 - LẤY VỊ TRÍ: Chỉ khi tool check_emergency trả về an toàn, bạn mới được phép hỏi bệnh nhân ĐANG Ở ĐÂU / GẦN KHU VỰC NÀO (nếu họ chưa cung cấp).
+BƯỚC 3 - PHÂN LUỒNG:
+   - Tự tin >= 85%: BẮT BUỘC gọi tool `resolve_and_get_booking_info`. KHÔNG ĐƯỢC trả lời suông.
+   - Tự tin < 85%: BẮT BUỘC gọi tool `escalate_to_human_nurse`.
+
+Các cơ sở Vinmec hiện có
 - Times City (458 Minh Khai, Hai Bà Trưng, Hà Nội)
 - Royal City (72A Nguyễn Trãi, Thanh Xuân, Hà Nội)
 - Ocean Park (2 Hải Bối, Đông Anh, Hà Nội)
@@ -58,8 +58,7 @@ Danh sách CÁC CHUYÊN KHOA hợp lệ (BẮT BUỘC sử dụng mã chính xá
 - CO_XUONG_KHOP: Cơ Xương Khớp (đau lưng, đau khớp, thoái hóa khớp)
 - NGOAI_CHINH_HINH: Ngoại Chỉnh hình (chấn thương xương, gãy xương)
 
-Tuyệt đối không chẩn đoán bệnh hay kê đơn thuốc. Giao tiếp bằng tiếng Việt tự nhiên."""
-
+Tuyệt đối không chẩn đoán bệnh hay kê đơn thuốc. Ưu tiên sử dụng tool để hoàn thành nhiệm vụ, hạn chế nói chuyện vòng vo."""
 _AGENT_TOOLS: list[Any] = [
     {
         "type": "function",
@@ -71,7 +70,7 @@ _AGENT_TOOLS: list[Any] = [
                 "properties": {
                     "symptoms": {
                         "type": "string",
-                        "description": "Triệu chứng cốt lõi của bệnh nhân",
+                        "description": "Chỉ trích xuất TỪ KHÓA triệu chứng cốt lõi, cực kỳ ngắn gọn (VD: 'đau thắt ngực', 'khó thở', 'đột quỵ'). Không đưa cả câu dài.",
                     }
                 },
                 "required": ["symptoms"],
@@ -974,6 +973,7 @@ async def run_triage_pipeline(
             messages=messages,
             tools=_AGENT_TOOLS,
             tool_choice="auto",
+            temperature=0.1,
         )
 
         response_message = response.choices[0].message
