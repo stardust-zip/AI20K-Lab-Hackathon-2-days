@@ -124,6 +124,31 @@ _AGENT_TOOLS: list[Any] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "book_appointment",
+            "description": "Gọi để tự động đặt lịch khám cho bệnh nhân khi họ đã chọn được bác sĩ và thời gian khám.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "doctor_id": {
+                        "type": "string",
+                        "description": "UUID của bác sĩ bệnh nhân chọn",
+                    },
+                    "department_code": {
+                        "type": "string",
+                        "description": "Mã khoa khám (VD: NGOAI_TH, TIM_MACH...)",
+                    },
+                    "appointment_time": {
+                        "type": "string",
+                        "description": "Thời gian khám định dạng ISO 8601 (VD: '2026-04-10T08:00:00+07:00')",
+                    },
+                },
+                "required": ["doctor_id", "department_code", "appointment_time"],
+            },
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -997,6 +1022,29 @@ async def run_triage_pipeline(
                     "Hệ thống đã ghi nhận triệu chứng. Tôi đang chuyển hồ sơ của bạn cho điều dưỡng chuyên môn để hỗ trợ trực tiếp."
                 )
                 return result
+            elif function_name == "book_appointment":
+                if conn:
+                    # Gọi hàm helper sẵn có trong agent.py để ghi vào CSDL
+                    appt_id = await create_appointment(
+                        conn=conn,
+                        patient_id=patient_id,
+                        doctor_id=args["doctor_id"],
+                        department_code=args["department_code"],
+                        appointment_time=args["appointment_time"],
+                    )
+                    conn.commit()  # Quan trọng: Phải commit thay đổi vào DB
+
+                    # Trả về kết quả cho bệnh nhân
+                    result["flow"] = "AUTO_RESOLVED"
+                    result["patient_message"] = (
+                        f"✅ Lịch hẹn của bạn đã được đặt thành công vào lúc {args['appointment_time']}. "
+                        "Mã đặt lịch của bạn là hệ thống đã ghi nhận. Xin vui lòng đến đúng giờ và mang theo giấy tờ tùy thân nhé!"
+                    )
+                    return result
+                else:
+                    tool_result = (
+                        "DB unavailable, cannot book appointment at this time."
+                    )
 
             elif function_name == "resolve_and_get_booking_info":
                 nearest_facility = args.get("nearest_facility", "").strip()
