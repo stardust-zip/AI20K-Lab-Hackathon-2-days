@@ -697,6 +697,106 @@ async def seed_red_flags(conn: Any, keywords: list[str]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 7b. Doctor / clinic / appointment helpers
+# ---------------------------------------------------------------------------
+
+
+async def get_doctors_by_department(
+    conn: Any,
+    department_code: str,
+) -> list[dict[str, Any]]:
+    """
+    Fetch up to 5 doctors for the given *department_code*.
+
+    Returns
+    -------
+    list[dict]
+        Each dict has keys: ``id``, ``name``, ``specialty``, ``department_code``.
+    """
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT id::text, name, specialty, department_code
+                FROM   doctors
+                WHERE  department_code = %s
+                ORDER  BY name
+                LIMIT  5
+                """,
+                (department_code,),
+            )
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_doctors_by_department failed: %s", exc)
+        return []
+
+
+async def get_clinics_by_department(
+    conn: Any,
+    department_code: str,
+) -> list[dict[str, Any]]:
+    """
+    Fetch all clinics that serve *department_code* (across all branches).
+
+    Returns
+    -------
+    list[dict]
+        Each dict has keys ``name``, ``address``.
+    """
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute(
+                """
+                SELECT name, address
+                FROM   clinics
+                WHERE  department_code = %s
+                ORDER  BY name
+                """,
+                (department_code,),
+            )
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_clinics_by_department failed: %s", exc)
+        return []
+
+
+async def create_appointment(
+    conn: Any,
+    patient_id: str,
+    doctor_id: str,
+    department_code: str,
+    appointment_time: str,
+) -> str:
+    """
+    Insert a new appointment row and return its UUID string.
+
+    Parameters
+    ----------
+    appointment_time:
+        ISO 8601 string (e.g. ``"2026-04-10T08:00:00+07:00"``).
+    """
+    appt_id = str(uuid.uuid4())
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO appointments
+                (id, patient_id, doctor_id, department_code, appointment_time)
+            VALUES (%s, %s, %s::uuid, %s, %s::timestamptz)
+            """,
+            (appt_id, patient_id, doctor_id, department_code, appointment_time),
+        )
+    logger.info(
+        "Appointment created: id=%s patient=%s doctor=%s",
+        appt_id,
+        patient_id,
+        doctor_id,
+    )
+    return appt_id
+
+
+# ---------------------------------------------------------------------------
 # 8. Main orchestration pipeline
 # ---------------------------------------------------------------------------
 
@@ -705,6 +805,7 @@ async def run_triage_pipeline(
     patient_id: str,
     message: str,
     conversation_history: list[dict[str, str]] | None = None,
+    follow_up_rounds: int = 0,
 ) -> dict[str, Any]:
     """
     Orchestrate the full triage pipeline for a single patient message.
@@ -715,9 +816,15 @@ async def run_triage_pipeline(
     2. Extract core symptoms via LLM.
     3. Check red-flag similarity via pgvector (short-circuit if emergency).
     4. Run LLM triage router to get department + confidence.
-    5. Generate clinical summary.
-    6. Persist triage_log and (if needed) human_triage_queue.
-    7. Return a structured result dict consumed by the API layer.
+    5. Flow decision:
+       - confidence ≥ threshold                        → AUTO_RESOLVED
+         (also fetches doctor list + nearest clinic)
+       - confidence < threshold, rounds < MAX           → FOLLOW_UP
+         (return follow_up_question only, no DB insert)
+       - confidence < threshold, rounds ≥ MAX           → PENDING_HUMAN
+         (insert to human_triage_queue)
+    6. Generate clinical summary (only when inserting to queue or resolved).
+    7. Persist triage_log + queue entry when needed.
 
     Parameters
     ----------
@@ -727,20 +834,25 @@ async def run_triage_pipeline(
         Raw free-text from the patient's chat input.
     conversation_history:
         Previous conversation turns for multi-turn context.
+    follow_up_rounds:
+        How many follow-up rounds have already been completed this session.
 
     Returns
     -------
     dict with keys:
-        - ``flow``            : ``"AUTO_RESOLVED"`` | ``"PENDING_HUMAN"`` | ``"EMERGENCY"``
-        - ``department_code`` : str | None
-        - ``department_name`` : str | None
-        - ``confidence_score``: int | None
+        - ``flow``             : ``"AUTO_RESOLVED"`` | ``"PENDING_HUMAN"``
+                                 | ``"EMERGENCY"`` | ``"FOLLOW_UP"``
+        - ``department_code``  : str | None
+        - ``department_name``  : str | None
+        - ``confidence_score`` : int | None
         - ``follow_up_question``: str | None
-        - ``clinical_summary``: str | None
-        - ``queue_id``        : str | None  (set when flow == PENDING_HUMAN)
-        - ``matched_keyword`` : str | None  (set when flow == EMERGENCY)
-        - ``similarity_score``: float | None (set when flow == EMERGENCY)
-        - ``error``           : str | None  (set on unexpected failures)
+        - ``clinical_summary`` : str | None
+        - ``queue_id``         : str | None  (PENDING_HUMAN only)
+        - ``matched_keyword``  : str | None  (EMERGENCY only)
+        - ``similarity_score`` : float | None (EMERGENCY only)
+        - ``doctors``          : list[dict] | None  (AUTO_RESOLVED only)
+        - ``nearest_clinic``   : dict | None  (AUTO_RESOLVED only)
+        - ``error``            : str | None
     """
     result: dict[str, Any] = {
         "flow": "PENDING_HUMAN",  # Safe default
@@ -752,6 +864,8 @@ async def run_triage_pipeline(
         "queue_id": None,
         "matched_keyword": None,
         "similarity_score": None,
+        "doctors": None,
+        "clinics": None,
         "error": None,
     }
 
@@ -826,6 +940,7 @@ async def run_triage_pipeline(
         result["department_name"] = dept_name
         result["confidence_score"] = confidence
         result["follow_up_question"] = follow_up
+        result["patient_message"] = triage_result.get("patient_message")
 
         # ------------------------------------------------------------------
         # Step 5: Clinical summary
@@ -838,7 +953,19 @@ async def run_triage_pipeline(
         # ------------------------------------------------------------------
         # Step 6: Persist to DB
         # ------------------------------------------------------------------
-        if db_available and conn is not None:
+        below_threshold = confidence < settings.HUMAN_TRIAGE_CONFIDENCE_THRESHOLD
+
+        if below_threshold and follow_up_rounds < settings.MAX_FOLLOWUP_ROUNDS:
+            # Still within follow-up budget – ask the patient for more info
+            result["flow"] = "FOLLOW_UP"
+            logger.info(
+                "FOLLOW_UP: confidence=%d round=%d/%d",
+                confidence,
+                follow_up_rounds,
+                settings.MAX_FOLLOWUP_ROUNDS,
+            )
+            # No DB persistence for follow-up rounds
+        elif db_available and conn is not None:
             try:
                 # Always embed and log the triage attempt
                 symptom_embedding = await get_embedding(symptoms_text)
@@ -851,8 +978,8 @@ async def run_triage_pipeline(
                     confidence=float(confidence),
                 )
 
-                # Queue for human review if confidence is below threshold
-                if confidence < settings.HUMAN_TRIAGE_CONFIDENCE_THRESHOLD:
+                if below_threshold:
+                    # Rounds exhausted – escalate to nurse queue
                     queue_id = await insert_to_queue(
                         conn=conn,
                         patient_id=patient_id,
@@ -862,10 +989,14 @@ async def run_triage_pipeline(
                     result["queue_id"] = queue_id
                     result["flow"] = "PENDING_HUMAN"
                     logger.info(
-                        "Low confidence (%d) → queued as %s", confidence, queue_id
+                        "PENDING_HUMAN: confidence=%d rounds exhausted → queue %s",
+                        confidence,
+                        queue_id,
                     )
                 else:
                     result["flow"] = "AUTO_RESOLVED"
+                    result["doctors"] = await get_doctors_by_department(conn, dept_code or "")
+                    result["clinics"] = await get_clinics_by_department(conn, dept_code or "")
 
                 conn.commit()
 
@@ -874,15 +1005,17 @@ async def run_triage_pipeline(
                 if conn:
                     conn.rollback()
                 # Fall back to confidence-based flow decision without DB
-                if confidence >= settings.HUMAN_TRIAGE_CONFIDENCE_THRESHOLD:
+                if not below_threshold:
                     result["flow"] = "AUTO_RESOLVED"
                 else:
                     result["flow"] = "PENDING_HUMAN"
 
         else:
             # No DB – decide flow by confidence alone
-            if confidence >= settings.HUMAN_TRIAGE_CONFIDENCE_THRESHOLD:
+            if not below_threshold:
                 result["flow"] = "AUTO_RESOLVED"
+            elif follow_up_rounds < settings.MAX_FOLLOWUP_ROUNDS:
+                result["flow"] = "FOLLOW_UP"
             else:
                 result["flow"] = "PENDING_HUMAN"
 

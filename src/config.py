@@ -78,6 +78,9 @@ class Settings:
     # Minutes before a PENDING queue item is marked TIMEOUT
     QUEUE_SLA_MINUTES: int = int(os.getenv("QUEUE_SLA_MINUTES", "3"))
 
+    # Number of follow-up rounds the chatbot asks before escalating to nurse
+    MAX_FOLLOWUP_ROUNDS: int = int(os.getenv("MAX_FOLLOWUP_ROUNDS", "3"))
+
     # ------------------------------------------------------------------
     # Rate limiting
     # ------------------------------------------------------------------
@@ -147,12 +150,13 @@ Nhiệm vụ của bạn là phân tích triệu chứng của bệnh nhân và 
 QUY TẮC TUYỆT ĐỐI:
 1. KHÔNG BAO GIỜ tự chẩn đoán bệnh cụ thể.
 2. KHÔNG BAO GIỜ kê đơn thuốc.
-3. Trả về KẾT QUẢ CHÍNH XÁC theo định dạng JSON.
-4. Nếu triệu chứng không rõ ràng, đặt confidence < 85 và tạo follow_up_question.
+3. Nếu bệnh nhân hỏi các vấn đề ngoài lề (không liên quan đến y tế hoặc khám chữa bệnh), TUYỆT ĐỐI KHÔNG TRẢ LỜI, hãy từ chối một cách lịch sự, đặt confidence_score < 85 và ghi câu từ chối vào follow_up_question.
+4. Trả về KẾT QUẢ CHÍNH XÁC theo định dạng JSON.
+5. Nếu triệu chứng không rõ ràng, đặt confidence < 85 và tạo follow_up_question.
 
 Luôn trả về JSON với format:
 {"department_code": "...", "department_name": "...", "confidence_score": 0-100, \
-"follow_up_question": "..." hoặc null, "clinical_summary": "Tóm tắt ngắn cho điều dưỡng"}"""
+"follow_up_question": "..." hoặc null, "clinical_summary": "Tóm tắt ngắn cho điều dưỡng", "patient_message": "Lời khuyên trực tiếp cho bệnh nhân với giọng điệu của một điều dưỡng chuyên nghiệp, tự nhiên."}"""
 
 
 @lru_cache(maxsize=1)

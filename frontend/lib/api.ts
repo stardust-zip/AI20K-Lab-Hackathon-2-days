@@ -6,13 +6,25 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 // Shared types (mirror backend schema.py)
 // ---------------------------------------------------------------------------
 
-export type TriageFlow = "AUTO_RESOLVED" | "PENDING_HUMAN" | "EMERGENCY";
+export type TriageFlow = "AUTO_RESOLVED" | "PENDING_HUMAN" | "EMERGENCY" | "FOLLOW_UP";
 export type QueueStatus = "PENDING" | "RESOLVED" | "TIMEOUT";
 export type ResolutionType =
   | "AI_AUTO"
   | "NURSE_APPROVED"
   | "NURSE_CORRECTED"
   | "DOCTOR_CORRECTED";
+
+export interface DoctorInfo {
+  id: string;
+  name: string;
+  specialty: string;
+  department_code: string;
+}
+
+export interface ClinicInfo {
+  name: string;
+  address: string;
+}
 
 export interface TriageResult {
   department_code: string | null;
@@ -22,6 +34,8 @@ export interface TriageResult {
   follow_up_question: string | null;
   queue_id: string | null;
   clinical_summary: string | null;
+  doctors?: DoctorInfo[] | null;
+  clinics?: ClinicInfo[] | null;
 }
 
 export interface EmergencyResult {
@@ -48,6 +62,20 @@ export interface ChatRequest {
   message: string;
   session_id?: string;
   conversation_history?: ConversationTurn[];
+  follow_up_rounds?: number;
+}
+
+export interface AppointmentRequest {
+  patient_id: string;
+  doctor_id: string;
+  department_code: string;
+  appointment_time: string;
+}
+
+export interface AppointmentResponse {
+  success: boolean;
+  appointment_id: string;
+  message: string;
 }
 
 export interface QueueItem {
@@ -192,4 +220,20 @@ export const DEPARTMENTS: Department[] = [
 export function getDeptName(code: string | null | undefined): string {
   if (!code) return "Chưa xác định";
   return DEPARTMENTS.find((d) => d.code === code)?.name ?? code;
+}
+
+// ---------------------------------------------------------------------------
+// Appointments
+// ---------------------------------------------------------------------------
+
+/**
+ * Book an appointment with a chosen doctor after AUTO_RESOLVED triage.
+ */
+export async function createAppointment(
+  req: AppointmentRequest
+): Promise<AppointmentResponse> {
+  return apiFetch<AppointmentResponse>("/api/v1/appointments", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
 }

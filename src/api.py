@@ -32,6 +32,7 @@ from slowapi.util import get_remote_address
 from sqlalchemy import create_engine, text
 
 from .agent import (
+    create_appointment,
     db_connection,
     get_pending_queue,
     mark_timed_out_items,
@@ -41,8 +42,12 @@ from .agent import (
 )
 from .config import settings
 from .schema import (
+    AppointmentRequest,
+    AppointmentResponse,
     ChatRequest,
     ChatResponse,
+    ClinicInfo,
+    DoctorInfo,
     EmergencyResult,
     ErrorResponse,
     PendingQueueResponse,
@@ -253,29 +258,28 @@ def _build_patient_message(flow: str, triage: dict[str, Any]) -> str:
     """
     Compose a patient-facing message string from the pipeline result dict.
     """
-    confidence: int = triage.get("confidence_score") or 0
     dept_name: str = triage.get("department_name") or "chuyên khoa phù hợp"
     follow_up: str | None = triage.get("follow_up_question")
+    patient_message: str | None = triage.get("patient_message")
 
-    disclaimer = (
-        "\n\n*⚠️ Đây là gợi ý tự động từ AI, không thay thế chẩn đoán y khoa. "
-        "Vui lòng xác nhận với điều dưỡng hoặc bác sĩ.*"
-    )
+    if flow == "FOLLOW_UP":
+        return patient_message or follow_up or "Bạn có thể mô tả chi tiết hơn về các triệu chứng được không?"
 
     if flow == "PENDING_HUMAN":
-        base = (
-            f"Hệ thống đang phân tích triệu chứng của bạn "
-            f"(độ tin cậy: {confidence}%). "
-            f"Điều dưỡng sẽ xem xét và xác nhận chuyên khoa phù hợp cho bạn sớm nhất."
+        base = patient_message or (
+            "Các triệu chứng của bạn cần được đánh giá chi tiết hơn. "
+            "Tôi đã chuyển thông tin của bạn đến điều dưỡng chuyên môn để hỗ trợ trực tiếp."
         )
-        if follow_up:
-            base += f"\n\n🩺 {follow_up}"
-        return base + disclaimer
+        if follow_up and base != follow_up:
+            # If the LLM didn't naturally include the follow up in patient_message, append it.
+            if follow_up not in base:
+                base += f"\n\n🩺 Trong lúc chờ đợi, {follow_up}"
+        return base
 
     # AUTO_RESOLVED
-    return (
-        f"✅ {confidence}% phù hợp với **{dept_name}**. "
-        f"Vui lòng đến quầy {dept_name} để được khám." + disclaimer
+    return patient_message or (
+        f"Dựa trên các triệu chứng bạn vừa mô tả, tôi khuyên bạn nên đến khám tại chuyên khoa {dept_name}. "
+        "Bạn vui lòng chọn cơ sở và đặt lịch khám với bác sĩ ở bên dưới nhé."
     )
 
 
@@ -345,6 +349,7 @@ async def chat_triage(
         patient_id=body.patient_id,
         message=body.message,
         conversation_history=body.conversation_history or [],
+        follow_up_rounds=body.follow_up_rounds,
     )
 
     flow_str: str = pipeline_result.get("flow", "PENDING_HUMAN")
@@ -371,9 +376,29 @@ async def chat_triage(
         )
 
     # ------------------------------------------------------------------
-    # AUTO_RESOLVED / PENDING_HUMAN path
+    # AUTO_RESOLVED / PENDING_HUMAN / FOLLOW_UP path
     # ------------------------------------------------------------------
     patient_msg = _build_patient_message(flow_str, pipeline_result)
+
+    # Build doctor / clinic info for AUTO_RESOLVED
+    doctors = None
+    clinics = None
+    if flow == TriageFlow.AUTO_RESOLVED:
+        raw_doctors = pipeline_result.get("doctors") or []
+        doctors = [
+            DoctorInfo(
+                id=d["id"],
+                name=d["name"],
+                specialty=d["specialty"],
+                department_code=d["department_code"],
+            )
+            for d in raw_doctors
+        ]
+        raw_clinics = pipeline_result.get("clinics") or []
+        clinics = [
+            ClinicInfo(name=c["name"], address=c["address"])
+            for c in raw_clinics
+        ]
 
     triage_result = TriageResult(
         department_code=pipeline_result.get("department_code"),
@@ -383,6 +408,8 @@ async def chat_triage(
         follow_up_question=pipeline_result.get("follow_up_question"),
         queue_id=pipeline_result.get("queue_id"),
         clinical_summary=pipeline_result.get("clinical_summary"),
+        doctors=doctors,
+        clinics=clinics,
     )
 
     logger.info(
@@ -651,5 +678,62 @@ async def seed_red_flags_endpoint(request: Request):  # noqa: ARG001
         message=(
             f"Đã seed thành công {inserted}/{len(keywords)} từ khóa nguy hiểm "
             f"vào bảng red_flags."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/appointments
+# ---------------------------------------------------------------------------
+
+
+@app.post(
+    "/api/v1/appointments",
+    response_model=AppointmentResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Appointments"],
+    summary="Book an appointment with a doctor",
+    responses={
+        201: {"description": "Appointment booked successfully"},
+        503: {"description": "Database unavailable"},
+    },
+)
+@limiter.limit("20/minute")
+async def create_appointment_endpoint(request: Request, body: AppointmentRequest):  # noqa: ARG001
+    """
+    Patient books an appointment with a chosen doctor after AUTO_RESOLVED triage.
+
+    Inserts a row into the ``appointments`` table and returns a confirmation.
+    """
+    logger.info(
+        "Appointment request: patient=%s doctor=%s dept=%s time=%s",
+        body.patient_id,
+        body.doctor_id,
+        body.department_code,
+        body.appointment_time,
+    )
+
+    try:
+        async with db_connection() as conn:
+            appt_id = await create_appointment(
+                conn=conn,
+                patient_id=body.patient_id,
+                doctor_id=body.doctor_id,
+                department_code=body.department_code,
+                appointment_time=body.appointment_time,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to create appointment: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Không thể đặt lịch hẹn. Vui lòng thử lại.",
+        ) from exc
+
+    return AppointmentResponse(
+        success=True,
+        appointment_id=appt_id,
+        message=(
+            f"Lịch hẹn đã được đặt thành công vào {body.appointment_time}. "
+            "Vui lòng đến đúng giờ và mang theo CMND/CCCD."
         ),
     )
