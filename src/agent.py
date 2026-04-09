@@ -40,11 +40,24 @@ Quy tắc hoạt động (Agentic Loop):
 4. Khi đủ thông tin (triệu chứng + vị trí), tự đánh giá độ tự tin (Confidence).
    - Nếu tự tin >= 85%: gọi tool `resolve_and_get_booking_info`, đánh giá xem cơ sở nào gần nhất với bệnh nhân bằng kiến thức địa lý và điền vào `nearest_facility`.
    - Nếu tự tin < 85%: gọi tool `escalate_to_human_nurse`.
-5. NẾU bệnh nhân yêu cầu đặt lịch cụ thể với một bác sĩ, hãy hỏi thời gian mong muốn và gọi tool `book_appointment`.
-Các cơ sở Vinmec hiện có:
+
+Các cơ sở Vinmec hiện có: 
 - Times City (458 Minh Khai, Hai Bà Trưng, Hà Nội)
 - Royal City (72A Nguyễn Trãi, Thanh Xuân, Hà Nội)
 - Ocean Park (2 Hải Bối, Đông Anh, Hà Nội)
+
+Danh sách CÁC CHUYÊN KHOA hợp lệ (BẮT BUỘC sử dụng mã chính xác trong department_code):
+- TIM_MACH: Nội Tim Mạch (tim đập bất thường, đau ngực, huyết áp cao/thấp)
+- NGOAI_TH: Ngoại Tiêu hoá (đau bụng, buồn nôn, nôn mửa, tiêu chảy, táo bón)
+- THAN_KINH: Nội Thần Kinh (đau đầu, chóng mặt, mất ngủ)
+- SAN_PHU: Sản Phụ Khoa (kinh nguyệt, thai sản, viêm phụ khoa)
+- NHI: Nhi Khoa (trẻ em dưới 16 tuổi, sốt trẻ em, ho trẻ em)
+- DA_LIEU: Da liễu (mẩn ngứa, nổi mề đay, mụn trứng cá, eczema)
+- MAT: Nhãn Khoa (đau mắt, mờ mắt, đỏ mắt, chảy ghèn)
+- TAI_MUI_HONG: Tai Mũi Họng (đau họng, viêm xoang, ù tai, chảy máu mũi)
+- CO_XUONG_KHOP: Cơ Xương Khớp (đau lưng, đau khớp, thoái hóa khớp)
+- NGOAI_CHINH_HINH: Ngoại Chỉnh hình (chấn thương xương, gãy xương)
+
 Tuyệt đối không chẩn đoán bệnh hay kê đơn thuốc. Giao tiếp bằng tiếng Việt tự nhiên."""
 
 _AGENT_TOOLS: list[Any] = [
