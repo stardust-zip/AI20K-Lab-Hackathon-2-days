@@ -263,7 +263,11 @@ def _build_patient_message(flow: str, triage: dict[str, Any]) -> str:
     patient_message: str | None = triage.get("patient_message")
 
     if flow == "FOLLOW_UP":
-        return patient_message or follow_up or "Bạn có thể mô tả chi tiết hơn về các triệu chứng được không?"
+        return (
+            patient_message
+            or follow_up
+            or "Bạn có thể mô tả chi tiết hơn về các triệu chứng được không?"
+        )
 
     if flow == "PENDING_HUMAN":
         base = patient_message or (
@@ -396,8 +400,7 @@ async def chat_triage(
         ]
         raw_clinics = pipeline_result.get("clinics") or []
         clinics = [
-            ClinicInfo(name=c["name"], address=c["address"])
-            for c in raw_clinics
+            ClinicInfo(name=c["name"], address=c["address"]) for c in raw_clinics
         ]
 
     triage_result = TriageResult(
