@@ -298,7 +298,7 @@ export default function NurseDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [realtimeActive, setRealtimeActive] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const [modal, setModal] = useState<ModalState>({
@@ -343,6 +343,10 @@ export default function NurseDashboard() {
   // ---------------------------------------------------------------------------
   // Initial load + polling fallback (every 10s)
   // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    setLastRefresh(new Date());
+  }, []);
 
   useEffect(() => {
     fetchQueue();
@@ -551,7 +555,7 @@ export default function NurseDashboard() {
           <div className="flex items-center gap-2">
             <span className="text-gray-500">Cập nhật lần cuối:</span>
             <span className="font-semibold text-gray-700">
-              {lastRefresh.toLocaleTimeString("vi-VN")}
+              {lastRefresh ? lastRefresh.toLocaleTimeString("vi-VN") : "--:--:--"}
             </span>
           </div>
           <div className="flex items-center gap-2">

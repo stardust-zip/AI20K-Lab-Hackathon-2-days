@@ -136,3 +136,110 @@ INSERT INTO departments (code, name) VALUES
     ('CO_XUONG_KHOP',     'Cơ Xương Khớp'),
     ('NGOAI_CHINH_HINH',  'Ngoại Chỉnh hình')
 ON CONFLICT (code) DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Table: clinics
+-- One representative clinic per department (used for "nearest clinic" lookup)
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS clinics (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            VARCHAR(255) NOT NULL,
+    address         TEXT         NOT NULL,
+    department_code VARCHAR(50)  NOT NULL REFERENCES departments(code) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_clinics_dept ON clinics (department_code);
+
+-- ---------------------------------------------------------------------------
+-- Table: doctors
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS doctors (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            VARCHAR(255) NOT NULL,
+    specialty       VARCHAR(255) NOT NULL,
+    department_code VARCHAR(50)  NOT NULL REFERENCES departments(code) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_doctors_dept ON doctors (department_code);
+
+-- ---------------------------------------------------------------------------
+-- Table: appointments
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS appointments (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id       VARCHAR(255) NOT NULL,
+    doctor_id        UUID         NOT NULL REFERENCES doctors(id) ON DELETE CASCADE,
+    department_code  VARCHAR(50)  NOT NULL,
+    appointment_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- Seed: clinics (one per department)
+-- ---------------------------------------------------------------------------
+
+INSERT INTO clinics (name, address, department_code) VALUES
+    -- Times City (Hai Bà Trưng)
+    ('Vinmec Times City – Nội Tim Mạch',    '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'TIM_MACH'),
+    ('Vinmec Times City – Ngoại Tiêu hoá',  '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'NGOAI_TH'),
+    ('Vinmec Times City – Nội Thần Kinh',   '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'THAN_KINH'),
+    ('Vinmec Times City – Sản Phụ Khoa',    '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'SAN_PHU'),
+    ('Vinmec Times City – Nhi Khoa',        '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'NHI'),
+    ('Vinmec Times City – Da liễu',         '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'DA_LIEU'),
+    ('Vinmec Times City – Nhãn Khoa',       '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'MAT'),
+    ('Vinmec Times City – Tai Mũi Họng',    '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'TAI_MUI_HONG'),
+    ('Vinmec Times City – Cơ Xương Khớp',   '458 Minh Khai, Hai Bà Trưng, Hà Nội',  'CO_XUONG_KHOP'),
+    ('Vinmec Times City – Ngoại Chỉnh hình','458 Minh Khai, Hai Bà Trưng, Hà Nội',  'NGOAI_CHINH_HINH'),
+    -- Royal City (Thanh Xuân)
+    ('Vinmec Royal City – Nội Tim Mạch',    '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'TIM_MACH'),
+    ('Vinmec Royal City – Ngoại Tiêu hoá',  '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'NGOAI_TH'),
+    ('Vinmec Royal City – Nội Thần Kinh',   '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'THAN_KINH'),
+    ('Vinmec Royal City – Sản Phụ Khoa',    '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'SAN_PHU'),
+    ('Vinmec Royal City – Nhi Khoa',        '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'NHI'),
+    ('Vinmec Royal City – Da liễu',         '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'DA_LIEU'),
+    ('Vinmec Royal City – Nhãn Khoa',       '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'MAT'),
+    ('Vinmec Royal City – Tai Mũi Họng',    '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'TAI_MUI_HONG'),
+    ('Vinmec Royal City – Cơ Xương Khớp',   '72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'CO_XUONG_KHOP'),
+    ('Vinmec Royal City – Ngoại Chỉnh hình','72A Nguyễn Trãi, Thanh Xuân, Hà Nội',  'NGOAI_CHINH_HINH'),
+    -- Ocean Park (Đông Anh)
+    ('Vinmec Ocean Park – Nội Tim Mạch',    '2 Hải Bối, Đông Anh, Hà Nội',          'TIM_MACH'),
+    ('Vinmec Ocean Park – Ngoại Tiêu hoá',  '2 Hải Bối, Đông Anh, Hà Nội',          'NGOAI_TH'),
+    ('Vinmec Ocean Park – Nội Thần Kinh',   '2 Hải Bối, Đông Anh, Hà Nội',          'THAN_KINH'),
+    ('Vinmec Ocean Park – Sản Phụ Khoa',    '2 Hải Bối, Đông Anh, Hà Nội',          'SAN_PHU'),
+    ('Vinmec Ocean Park – Nhi Khoa',        '2 Hải Bối, Đông Anh, Hà Nội',          'NHI'),
+    ('Vinmec Ocean Park – Da liễu',         '2 Hải Bối, Đông Anh, Hà Nội',          'DA_LIEU'),
+    ('Vinmec Ocean Park – Nhãn Khoa',       '2 Hải Bối, Đông Anh, Hà Nội',          'MAT'),
+    ('Vinmec Ocean Park – Tai Mũi Họng',    '2 Hải Bối, Đông Anh, Hà Nội',          'TAI_MUI_HONG'),
+    ('Vinmec Ocean Park – Cơ Xương Khớp',   '2 Hải Bối, Đông Anh, Hà Nội',          'CO_XUONG_KHOP'),
+    ('Vinmec Ocean Park – Ngoại Chỉnh hình','2 Hải Bối, Đông Anh, Hà Nội',          'NGOAI_CHINH_HINH')
+ON CONFLICT DO NOTHING;
+
+-- ---------------------------------------------------------------------------
+-- Seed: doctors (~2 per department)
+-- ---------------------------------------------------------------------------
+
+INSERT INTO doctors (name, specialty, department_code) VALUES
+    ('BS. Nguyễn Văn An',      'Tim mạch can thiệp',          'TIM_MACH'),
+    ('BS. Trần Thị Bình',      'Rối loạn nhịp tim',           'TIM_MACH'),
+    ('BS. Lê Hoàng Cường',     'Phẫu thuật tiêu hoá',         'NGOAI_TH'),
+    ('BS. Phạm Thị Dung',      'Nội soi tiêu hoá',            'NGOAI_TH'),
+    ('BS. Vũ Minh Đức',        'Thần kinh học lâm sàng',      'THAN_KINH'),
+    ('BS. Hoàng Thị Lan',      'Đau đầu và đột quỵ',          'THAN_KINH'),
+    ('BS. Ngô Thị Mai',        'Sản khoa',                    'SAN_PHU'),
+    ('BS. Đinh Văn Nam',       'Phụ khoa – Nội tiết sinh sản','SAN_PHU'),
+    ('BS. Trịnh Thu Hà',       'Nhi tổng quát',               'NHI'),
+    ('BS. Bùi Quang Huy',      'Nhi sơ sinh',                 'NHI'),
+    ('BS. Đặng Thị Kim',       'Da liễu thẩm mỹ',             'DA_LIEU'),
+    ('BS. Lý Văn Long',        'Dị ứng – miễn dịch da',       'DA_LIEU'),
+    ('BS. Phan Thị Minh',      'Nhãn khoa tổng quát',         'MAT'),
+    ('BS. Cao Văn Nghĩa',      'Phẫu thuật mắt',              'MAT'),
+    ('BS. Dương Thị Oanh',     'Tai mũi họng tổng quát',      'TAI_MUI_HONG'),
+    ('BS. Lương Quốc Phong',   'Phẫu thuật nội soi TMH',      'TAI_MUI_HONG'),
+    ('BS. Mai Thị Quỳnh',      'Cơ xương khớp nội khoa',      'CO_XUONG_KHOP'),
+    ('BS. Hồ Văn Sơn',         'Thấp khớp học',               'CO_XUONG_KHOP'),
+    ('BS. Tô Thị Thanh',       'Chỉnh hình chấn thương',      'NGOAI_CHINH_HINH'),
+    ('BS. Nguyễn Đức Uy',      'Phẫu thuật khớp và cột sống', 'NGOAI_CHINH_HINH')
+ON CONFLICT DO NOTHING;

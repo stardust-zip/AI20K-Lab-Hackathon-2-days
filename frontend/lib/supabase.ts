@@ -34,8 +34,8 @@ export function getSupabaseClient(): SupabaseClient {
   if (!supabaseUrl || !supabaseAnonKey) {
     console.warn(
       "[supabase] NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY " +
-        "is not set. Realtime subscriptions will be unavailable. " +
-        "The dashboard will fall back to polling."
+      "is not set. Realtime subscriptions will be unavailable. " +
+      "The dashboard will fall back to polling."
     );
   }
 

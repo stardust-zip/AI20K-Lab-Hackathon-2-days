@@ -27,10 +27,13 @@ class TriageFlow(str, Enum):
     """AI confidence ≥ 85 – routed automatically, no human needed."""
 
     PENDING_HUMAN = "PENDING_HUMAN"
-    """AI confidence < 85 – queued for nurse review."""
+    """AI confidence < 85 after MAX_FOLLOWUP_ROUNDS – queued for nurse review."""
 
     EMERGENCY = "EMERGENCY"
     """Red-flag similarity > 0.85 – bypass LLM, trigger 115 emergency flow."""
+
+    FOLLOW_UP = "FOLLOW_UP"
+    """AI confidence < 85 but follow-up rounds not exhausted – chatbot asks more."""
 
 
 class ResolutionType(str, Enum):
@@ -77,6 +80,15 @@ class ChatRequest(BaseModel):
         description="Optional conversation session UUID for multi-turn chat tracking.",
         examples=["550e8400-e29b-41d4-a716-446655440000"],
     )
+    follow_up_rounds: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of follow-up rounds already completed in this session. "
+            "Incremented by the frontend after each FOLLOW_UP response. "
+            "Once ≥ MAX_FOLLOWUP_ROUNDS the pipeline escalates to PENDING_HUMAN."
+        ),
+    )
     conversation_history: list[dict[str, str]] = Field(
         default_factory=list,
         description=(
@@ -106,10 +118,26 @@ class ChatRequest(BaseModel):
         return v
 
 
+class DoctorInfo(BaseModel):
+    """A single doctor entry returned with AUTO_RESOLVED results."""
+
+    id: str = Field(..., description="UUID of the doctor record.")
+    name: str = Field(..., description="Full name (e.g. 'BS. Nguyễn Văn An').")
+    specialty: str = Field(..., description="Medical specialty description.")
+    department_code: str = Field(..., description="Department code this doctor belongs to.")
+
+
+class ClinicInfo(BaseModel):
+    """Nearest clinic information returned with AUTO_RESOLVED results."""
+
+    name: str = Field(..., description="Clinic/branch name.")
+    address: str = Field(..., description="Street address.")
+
+
 class TriageResult(BaseModel):
     """
     Core triage outcome embedded inside ``ChatResponse.result``.
-    Present for AUTO_RESOLVED and PENDING_HUMAN flows.
+    Present for AUTO_RESOLVED, PENDING_HUMAN, and FOLLOW_UP flows.
     """
 
     department_code: str | None = Field(
@@ -148,6 +176,14 @@ class TriageResult(BaseModel):
     clinical_summary: str | None = Field(
         default=None,
         description="Short clinical summary generated for the nurse dashboard.",
+    )
+    doctors: list[DoctorInfo] | None = Field(
+        default=None,
+        description="List of available doctors (populated only for AUTO_RESOLVED flow).",
+    )
+    clinics: list[ClinicInfo] | None = Field(
+        default=None,
+        description="All clinics for the suggested department across all branches (AUTO_RESOLVED only). Frontend uses patient location to pick the nearest one.",
     )
 
 
@@ -310,6 +346,31 @@ class ResolveResponse(BaseModel):
         ..., description="How the case was resolved."
     )
     message: str = Field(..., description="Human-readable confirmation message.")
+
+
+# ---------------------------------------------------------------------------
+# Appointment models
+# ---------------------------------------------------------------------------
+
+
+class AppointmentRequest(BaseModel):
+    """Payload sent by the patient to book an appointment with a specific doctor."""
+
+    patient_id: str = Field(..., description="Opaque patient identifier.")
+    doctor_id: str = Field(..., description="UUID of the chosen doctor.")
+    department_code: str = Field(..., description="Department code.")
+    appointment_time: str = Field(
+        ...,
+        description="ISO 8601 datetime string for the appointment (e.g. '2026-04-10T08:00:00+07:00').",
+    )
+
+
+class AppointmentResponse(BaseModel):
+    """Response returned after successfully booking an appointment."""
+
+    success: bool
+    appointment_id: str = Field(..., description="UUID of the created appointment record.")
+    message: str = Field(..., description="Patient-facing confirmation message.")
 
 
 # ---------------------------------------------------------------------------
