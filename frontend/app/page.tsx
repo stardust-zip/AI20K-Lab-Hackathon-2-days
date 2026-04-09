@@ -272,7 +272,8 @@ function getTimeSlots(): { label: string; iso: string }[] {
   for (let dayOffset = 1; dayOffset <= 2; dayOffset++) {
     const d = new Date(now);
     d.setDate(d.getDate() + dayOffset);
-    const dayLabel = dayOffset === 1 ? "Ngày mai" : `${d.getDate()}/${d.getMonth() + 1}`;
+    const dayLabel =
+      dayOffset === 1 ? "Ngày mai" : `${d.getDate()}/${d.getMonth() + 1}`;
     for (const [hour, label] of [
       [8, "08:00"],
       [14, "14:00"],
@@ -295,9 +296,8 @@ function DoctorSelectionBubble({
   patientId: string;
   departmentCode: string;
 }) {
-  const [selectedClinic, setSelectedClinic] = useState<ClinicInfo | null>(
-    clinics && clinics.length > 0 ? clinics[0] : null
-  );
+  const [selectedClinic, setSelectedClinic] = useState<ClinicInfo | null>(null);
+
   const [selectedDoctor, setSelectedDoctor] = useState<DoctorInfo | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   const [booking, setBooking] = useState(false);
@@ -329,7 +329,9 @@ function DoctorSelectionBubble({
       <div className="mx-3 my-2 rounded-xl bg-green-50 border border-green-300 p-4 shadow-sm">
         <div className="flex items-center gap-2 mb-1">
           <span className="text-xl">🎉</span>
-          <p className="font-bold text-green-800 text-sm">Đặt lịch thành công!</p>
+          <p className="font-bold text-green-800 text-sm">
+            Đặt lịch thành công!
+          </p>
         </div>
         <p className="text-xs text-green-700">{booked}</p>
       </div>
@@ -338,7 +340,6 @@ function DoctorSelectionBubble({
 
   return (
     <div className="mx-3 my-2 rounded-xl bg-white border border-blue-200 p-4 shadow-sm space-y-3">
-
       {/* Step 1: Location picker */}
       {!selectedClinic ? (
         <>
@@ -367,7 +368,11 @@ function DoctorSelectionBubble({
               <p className="text-blue-600">{selectedClinic.address}</p>
             </div>
             <button
-              onClick={() => { setSelectedClinic(null); setSelectedDoctor(null); setSelectedSlot(""); }}
+              onClick={() => {
+                setSelectedClinic(null);
+                setSelectedDoctor(null);
+                setSelectedSlot("");
+              }}
               className="text-[10px] text-blue-500 hover:text-blue-700 underline shrink-0 ml-2 mt-0.5"
             >
               Đổi
@@ -380,7 +385,10 @@ function DoctorSelectionBubble({
             {doctors.map((doc) => (
               <button
                 key={doc.id}
-                onClick={() => { setSelectedDoctor(doc); setSelectedSlot(""); }}
+                onClick={() => {
+                  setSelectedDoctor(doc);
+                  setSelectedSlot("");
+                }}
                 className={`w-full text-left px-3 py-2 rounded-lg border text-xs transition-colors ${
                   selectedDoctor?.id === doc.id
                     ? "border-blue-500 bg-blue-50 text-blue-800"
@@ -396,7 +404,9 @@ function DoctorSelectionBubble({
           {/* Step 3: Time slot picker */}
           {selectedDoctor && (
             <>
-              <p className="text-xs font-semibold text-gray-600">Chọn giờ khám:</p>
+              <p className="text-xs font-semibold text-gray-600">
+                Chọn giờ khám:
+              </p>
               <div className="grid grid-cols-2 gap-2">
                 {timeSlots.map((slot) => (
                   <button
@@ -470,10 +480,11 @@ function ChatBubble({ message }: { message: Message }) {
         className={`max-w-[78%] ${isUser ? "items-end" : "items-start"} flex flex-col`}
       >
         <div
-          className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${isUser
+          className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
+            isUser
               ? "bg-blue-600 text-white rounded-br-sm"
               : "bg-white text-gray-800 border border-gray-100 rounded-bl-sm"
-            }`}
+          }`}
         >
           {message.content}
         </div>

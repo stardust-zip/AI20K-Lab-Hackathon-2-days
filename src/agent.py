@@ -36,14 +36,28 @@ _AGENT_SYSTEM_PROMPT = """Bạn là trợ lý AI Điều dưỡng Sơ yếu củ
 Quy tắc hoạt động (Agentic Loop):
 1. LUÔN LUÔN gọi tool `check_emergency` đầu tiên để quét rủi ro.
 2. Nếu thiếu thông tin, hãy trực tiếp hỏi lại bệnh nhân (không gọi tool).
-3. TRƯỚC KHI gọi `resolve_and_get_booking_info`, BẮT BUỘC hỏi bệnh nhân ĐANG Ở ĐÂU / GẦN KHU VỰC NÀO. 
+3. TRƯỚC KHI gọi `resolve_and_get_booking_info`, BẮT BUỘC hỏi bệnh nhân ĐANG Ở ĐÂU / GẦN KHU VỰC NÀO.
 4. Khi đủ thông tin (triệu chứng + vị trí), tự đánh giá độ tự tin (Confidence).
    - Nếu tự tin >= 85%: gọi tool `resolve_and_get_booking_info`, đánh giá xem cơ sở nào gần nhất với bệnh nhân bằng kiến thức địa lý và điền vào `nearest_facility`.
    - Nếu tự tin < 85%: gọi tool `escalate_to_human_nurse`.
-Các cơ sở Vinmec hiện có: 
+
+Các cơ sở Vinmec hiện có:
 - Times City (458 Minh Khai, Hai Bà Trưng, Hà Nội)
 - Royal City (72A Nguyễn Trãi, Thanh Xuân, Hà Nội)
 - Ocean Park (2 Hải Bối, Đông Anh, Hà Nội)
+
+Danh sách CÁC CHUYÊN KHOA hợp lệ (BẮT BUỘC sử dụng mã chính xác trong department_code):
+- TIM_MACH: Nội Tim Mạch (tim đập bất thường, đau ngực, huyết áp cao/thấp)
+- NGOAI_TH: Ngoại Tiêu hoá (đau bụng, buồn nôn, nôn mửa, tiêu chảy, táo bón)
+- THAN_KINH: Nội Thần Kinh (đau đầu, chóng mặt, mất ngủ)
+- SAN_PHU: Sản Phụ Khoa (kinh nguyệt, thai sản, viêm phụ khoa)
+- NHI: Nhi Khoa (trẻ em dưới 16 tuổi, sốt trẻ em, ho trẻ em)
+- DA_LIEU: Da liễu (mẩn ngứa, nổi mề đay, mụn trứng cá, eczema)
+- MAT: Nhãn Khoa (đau mắt, mờ mắt, đỏ mắt, chảy ghèn)
+- TAI_MUI_HONG: Tai Mũi Họng (đau họng, viêm xoang, ù tai, chảy máu mũi)
+- CO_XUONG_KHOP: Cơ Xương Khớp (đau lưng, đau khớp, thoái hóa khớp)
+- NGOAI_CHINH_HINH: Ngoại Chỉnh hình (chấn thương xương, gãy xương)
+
 Tuyệt đối không chẩn đoán bệnh hay kê đơn thuốc. Giao tiếp bằng tiếng Việt tự nhiên."""
 
 _AGENT_TOOLS: list[Any] = [
@@ -986,7 +1000,13 @@ async def run_triage_pipeline(
 
             elif function_name == "resolve_and_get_booking_info":
                 nearest_facility = args.get("nearest_facility", "").strip()
-                if not nearest_facility or nearest_facility.lower() in ["chưa rõ", "không rõ", "unknown", "thành phố", "hà nội"]:
+                if not nearest_facility or nearest_facility.lower() in [
+                    "chưa rõ",
+                    "không rõ",
+                    "unknown",
+                    "thành phố",
+                    "hà nội",
+                ]:
                     tool_result = "ERROR: Missing nearest_facility. You must ask the patient to specify their current district/area before calling this tool."
                     messages.append(
                         {
@@ -1012,27 +1032,35 @@ async def run_triage_pipeline(
                     if nearest_facility:
                         loc_lower = nearest_facility.lower()
                         # Xử lý các keyword từ LLM để map với DB
-                        if "times" in loc_lower: loc_lower = "times"
-                        elif "royal" in loc_lower: loc_lower = "royal"
-                        elif "ocean" in loc_lower: loc_lower = "ocean"
+                        if "times" in loc_lower:
+                            loc_lower = "times"
+                        elif "royal" in loc_lower:
+                            loc_lower = "royal"
+                        elif "ocean" in loc_lower:
+                            loc_lower = "ocean"
 
                         def _clinic_sort_key(c: dict) -> int:
                             name_lower = c.get("name", "").lower()
                             if loc_lower in name_lower:
                                 return 0  # match → top
                             return 1
+
                         all_clinics.sort(key=_clinic_sort_key)
                     result["clinics"] = all_clinics
                 tool_result = "Booking info retrieved."
-                
+
                 nearest_clinic_name = ""
                 nearest_clinic_address = ""
                 if result.get("clinics"):
                     nearest_clinic_name = result["clinics"][0].get("name", "")
                     nearest_clinic_address = result["clinics"][0].get("address", "")
-                
-                patient_loc_text = f" Dựa trên vị trí của bạn, gần nhất là cơ sở {nearest_clinic_name} (Tại địa chỉ: {nearest_clinic_address})." if nearest_clinic_name else ""
-                
+
+                patient_loc_text = (
+                    f" Dựa trên vị trí của bạn, gần nhất là cơ sở {nearest_clinic_name} (Tại địa chỉ: {nearest_clinic_address})."
+                    if nearest_clinic_name
+                    else ""
+                )
+
                 result["patient_message"] = (
                     f"Tôi khuyên bạn nên khám tại khoa {args['department_name']}."
                     + patient_loc_text
