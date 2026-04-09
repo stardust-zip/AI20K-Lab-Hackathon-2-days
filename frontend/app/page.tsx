@@ -441,6 +441,14 @@ function DoctorSelectionBubble({
 function ChatBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
 
+  // Tạo state để kiểm tra xem component đã hiển thị trên trình duyệt chưa
+  const [mounted, setMounted] = useState(false);
+
+  // useEffect này chỉ chạy một lần duy nhất sau khi component mount thành công
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   if (message.isEmergency) {
     return (
       <div className="w-full">
@@ -470,16 +478,20 @@ function ChatBubble({ message }: { message: Message }) {
         className={`max-w-[78%] ${isUser ? "items-end" : "items-start"} flex flex-col`}
       >
         <div
-          className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${
-            isUser
+          className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed shadow-sm ${isUser
               ? "bg-blue-600 text-white rounded-br-sm"
               : "bg-white text-gray-800 border border-gray-100 rounded-bl-sm"
-          }`}
+            }`}
         >
           {message.content}
         </div>
-        <span className="text-[10px] text-gray-400 mt-0.5 px-1">
-          {formatTime(message.timestamp)}
+
+        {/* Chỉ hiển thị thời gian khi đã mounted để tránh lệch giây giữa Server và Client */}
+        <span
+          className="text-[10px] text-gray-400 mt-0.5 px-1"
+          suppressHydrationWarning
+        >
+          {mounted ? formatTime(message.timestamp) : ""}
         </span>
       </div>
       {isUser && (
