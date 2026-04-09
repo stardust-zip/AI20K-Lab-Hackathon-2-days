@@ -284,12 +284,6 @@ function getTimeSlots(): { label: string; iso: string }[] {
   return slots;
 }
 
-const HOSPITAL_AREAS = [
-  { key: "Times City", label: "Vinmec Times City", sub: "Hai Bà Trưng, Hà Nội" },
-  { key: "Royal City", label: "Vinmec Royal City", sub: "Thanh Xuân, Hà Nội" },
-  { key: "Ocean Park", label: "Vinmec Ocean Park", sub: "Đông Anh, Hà Nội" },
-];
-
 function DoctorSelectionBubble({
   doctors,
   clinics,
@@ -301,7 +295,9 @@ function DoctorSelectionBubble({
   patientId: string;
   departmentCode: string;
 }) {
-  const [selectedClinic, setSelectedClinic] = useState<ClinicInfo | null>(null);
+  const [selectedClinic, setSelectedClinic] = useState<ClinicInfo | null>(
+    clinics && clinics.length > 0 ? clinics[0] : null
+  );
   const [selectedDoctor, setSelectedDoctor] = useState<DoctorInfo | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   const [booking, setBooking] = useState(false);
@@ -350,20 +346,16 @@ function DoctorSelectionBubble({
             📍 Bạn muốn khám tại cơ sở nào?
           </p>
           <div className="space-y-2">
-            {HOSPITAL_AREAS.map((area) => {
-              const match = clinics.find((c) => c.name.includes(area.key));
-              if (!match) return null;
-              return (
-                <button
-                  key={area.key}
-                  onClick={() => setSelectedClinic(match)}
-                  className="w-full text-left px-3 py-2.5 rounded-lg border border-gray-200 bg-gray-50 hover:border-blue-400 hover:bg-blue-50 text-xs transition-colors"
-                >
-                  <p className="font-semibold text-gray-800">{area.label}</p>
-                  <p className="text-gray-500">{match.address}</p>
-                </button>
-              );
-            })}
+            {clinics.map((clinic) => (
+              <button
+                key={clinic.name}
+                onClick={() => setSelectedClinic(clinic)}
+                className="w-full text-left px-3 py-2.5 rounded-lg border border-gray-200 bg-gray-50 hover:border-blue-400 hover:bg-blue-50 text-xs transition-colors"
+              >
+                <p className="font-semibold text-gray-800">{clinic.name}</p>
+                <p className="text-gray-500">{clinic.address}</p>
+              </button>
+            ))}
           </div>
         </>
       ) : (

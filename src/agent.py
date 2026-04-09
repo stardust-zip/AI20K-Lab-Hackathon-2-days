@@ -36,9 +36,14 @@ _AGENT_SYSTEM_PROMPT = """Bạn là trợ lý AI Điều dưỡng Sơ yếu củ
 Quy tắc hoạt động (Agentic Loop):
 1. LUÔN LUÔN gọi tool `check_emergency` đầu tiên để quét rủi ro.
 2. Nếu thiếu thông tin, hãy trực tiếp hỏi lại bệnh nhân (không gọi tool).
-3. Khi đủ thông tin, tự đánh giá độ tự tin (Confidence).
-   - Nếu tự tin >= 85%: gọi tool `resolve_and_get_booking_info`.
+3. TRƯỚC KHI gọi `resolve_and_get_booking_info`, BẮT BUỘC hỏi bệnh nhân ĐANG Ở ĐÂU / GẦN KHU VỰC NÀO. 
+4. Khi đủ thông tin (triệu chứng + vị trí), tự đánh giá độ tự tin (Confidence).
+   - Nếu tự tin >= 85%: gọi tool `resolve_and_get_booking_info`, đánh giá xem cơ sở nào gần nhất với bệnh nhân bằng kiến thức địa lý và điền vào `nearest_facility`.
    - Nếu tự tin < 85%: gọi tool `escalate_to_human_nurse`.
+Các cơ sở Vinmec hiện có: 
+- Times City (458 Minh Khai, Hai Bà Trưng, Hà Nội)
+- Royal City (72A Nguyễn Trãi, Thanh Xuân, Hà Nội)
+- Ocean Park (2 Hải Bối, Đông Anh, Hà Nội)
 Tuyệt đối không chẩn đoán bệnh hay kê đơn thuốc. Giao tiếp bằng tiếng Việt tự nhiên."""
 
 _AGENT_TOOLS: list[Any] = [
@@ -84,20 +89,24 @@ _AGENT_TOOLS: list[Any] = [
         "type": "function",
         "function": {
             "name": "resolve_and_get_booking_info",
-            "description": "Gọi khi ĐÃ CHẮC CHẮN (>85%) về chuyên khoa. Lấy danh sách bác sĩ và cơ sở để bệnh nhân đặt lịch.",
+            "description": "Gọi khi ĐÃ CHẮC CHẮN (>85%) về chuyên khoa VÀ ĐÃ BIẾT VỊ TRÍ bệnh nhân. Lấy danh sách bác sĩ và cơ sở gần nhất để bệnh nhân đặt lịch.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "department_code": {
                         "type": "string",
-                        "description": "Mã khoa (VD: CARD, GAST, ...)",
+                        "description": "Mã khoa (VD: TIM_MACH, NGOAI_TH, ...)",
                     },
                     "department_name": {
                         "type": "string",
                         "description": "Tên khoa bằng tiếng Việt",
                     },
+                    "nearest_facility": {
+                        "type": "string",
+                        "description": "Suy luận địa lý để chọn ra 1 cơ sở gần vị trí bệnh nhân nhất (chọn đúng 1 trong: 'Times City', 'Royal City', 'Ocean Park'). NẾU CHƯA BIẾT VỊ TRÍ BỆNH NHÂN, để chuỗi rỗng '' và tool sẽ bị từ chối.",
+                    },
                 },
-                "required": ["department_code", "department_name"],
+                "required": ["department_code", "department_name", "nearest_facility"],
             },
         },
     },
@@ -919,7 +928,7 @@ async def run_triage_pipeline(
     }
 
     # Vòng lặp tự trị (Tối đa 3 steps để tránh infinite loop)
-    MAX_ITERATIONS = 3
+    MAX_ITERATIONS = 5
     for _ in range(MAX_ITERATIONS):
         response = await client.chat.completions.create(
             model=settings.OPENAI_CHAT_MODEL,
@@ -976,6 +985,19 @@ async def run_triage_pipeline(
                 return result
 
             elif function_name == "resolve_and_get_booking_info":
+                nearest_facility = args.get("nearest_facility", "").strip()
+                if not nearest_facility or nearest_facility.lower() in ["chưa rõ", "không rõ", "unknown", "thành phố", "hà nội"]:
+                    tool_result = "ERROR: Missing nearest_facility. You must ask the patient to specify their current district/area before calling this tool."
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "name": function_name,
+                            "content": tool_result,
+                        }
+                    )
+                    continue
+
                 result["flow"] = "AUTO_RESOLVED"
                 result["department_code"] = args["department_code"]
                 result["department_name"] = args["department_name"]
@@ -983,12 +1005,38 @@ async def run_triage_pipeline(
                     result["doctors"] = await get_doctors_by_department(
                         conn, args["department_code"]
                     )
-                    result["clinics"] = await get_clinics_by_department(
+                    all_clinics = await get_clinics_by_department(
                         conn, args["department_code"]
                     )
+                    # Sort clinics: matching nearest facility name to top
+                    if nearest_facility:
+                        loc_lower = nearest_facility.lower()
+                        # Xử lý các keyword từ LLM để map với DB
+                        if "times" in loc_lower: loc_lower = "times"
+                        elif "royal" in loc_lower: loc_lower = "royal"
+                        elif "ocean" in loc_lower: loc_lower = "ocean"
+
+                        def _clinic_sort_key(c: dict) -> int:
+                            name_lower = c.get("name", "").lower()
+                            if loc_lower in name_lower:
+                                return 0  # match → top
+                            return 1
+                        all_clinics.sort(key=_clinic_sort_key)
+                    result["clinics"] = all_clinics
                 tool_result = "Booking info retrieved."
+                
+                nearest_clinic_name = ""
+                nearest_clinic_address = ""
+                if result.get("clinics"):
+                    nearest_clinic_name = result["clinics"][0].get("name", "")
+                    nearest_clinic_address = result["clinics"][0].get("address", "")
+                
+                patient_loc_text = f" Dựa trên vị trí của bạn, gần nhất là cơ sở {nearest_clinic_name} (Tại địa chỉ: {nearest_clinic_address})." if nearest_clinic_name else ""
+                
                 result["patient_message"] = (
-                    f"Tôi khuyên bạn nên khám tại khoa {args['department_name']}. Dưới đây là các bác sĩ phù hợp."
+                    f"Tôi khuyên bạn nên khám tại khoa {args['department_name']}."
+                    + patient_loc_text
+                    + " Dưới đây là các bác sĩ và cơ sở phù hợp đễ bạn đặt lịch khám!"
                 )
                 return result
 
