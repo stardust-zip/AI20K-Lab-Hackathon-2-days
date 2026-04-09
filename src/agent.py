@@ -41,7 +41,7 @@ Quy tắc hoạt động (Agentic Loop):
    - Nếu tự tin >= 85%: gọi tool `resolve_and_get_booking_info`, đánh giá xem cơ sở nào gần nhất với bệnh nhân bằng kiến thức địa lý và điền vào `nearest_facility`.
    - Nếu tự tin < 85%: gọi tool `escalate_to_human_nurse`.
 
-Các cơ sở Vinmec hiện có: 
+Các cơ sở Vinmec hiện có:
 - Times City (458 Minh Khai, Hai Bà Trưng, Hà Nội)
 - Royal City (72A Nguyễn Trãi, Thanh Xuân, Hà Nội)
 - Ocean Park (2 Hải Bối, Đông Anh, Hà Nội)
